@@ -3,6 +3,7 @@ package store.cadera.shop;
 import static org.junit.jupiter.api.Assertions.*;
 import java.nio.file.*;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
@@ -23,6 +24,11 @@ class CoreTest {
     @Test void losslessFormatting() { assertEquals("123.45", Money.format(12345)); assertEquals("-1", Money.config(-1)); }
     @Test void noBuySellLoop() { assertThrows(IllegalArgumentException.class, () -> Money.validatePair(100, 101)); }
     @Test void disabledPricePairAllowed() { assertDoesNotThrow(() -> Money.validatePair(-1, 100)); }
+
+    @Test void exactVaultResponseAccepted() { assertTrue(Wallet.validateResponse(12345, true, 123.45)); }
+    @Test void cleanVaultDeclineAccepted() { assertFalse(Wallet.validateResponse(12345, false, 0.0)); }
+    @Test void partialVaultFailureIsAmbiguous() { assertThrows(IllegalStateException.class, () -> Wallet.validateResponse(12345, false, 1.0)); }
+    @Test void mismatchedVaultSuccessIsAmbiguous() { assertThrows(IllegalStateException.class, () -> Wallet.validateResponse(12345, true, 123.44)); }
 
     static Stream<Arguments> routes() {
         return Stream.of(
@@ -46,6 +52,7 @@ class CoreTest {
         public void restore() { items = 64; }
         public void persist() { persisted++; }
     }
+
     @Test void successfulPaymentRemovesItemsAndCompletesJournal() throws Exception {
         try (Journal log = new Journal(temp.resolve("tx.log"))) {
             Inventory inventory = new Inventory(); UUID user = UUID.randomUUID();
@@ -54,6 +61,7 @@ class CoreTest {
             assertTrue(log.pending().isEmpty());
         }
     }
+
     @Test void failedPaymentRestoresItems() throws Exception {
         try (Journal log = new Journal(temp.resolve("tx.log"))) {
             Inventory inventory = new Inventory();
@@ -61,6 +69,7 @@ class CoreTest {
             assertEquals(64, inventory.items); assertTrue(log.pending().isEmpty());
         }
     }
+
     @Test void unknownPaymentDoesNotDuplicateAndLocksPlayerAcrossRestart() throws Exception {
         UUID user = UUID.randomUUID(); Path file = temp.resolve("tx.log"); Inventory inventory = new Inventory();
         try (Journal log = new Journal(file)) {
@@ -75,6 +84,7 @@ class CoreTest {
             assertFalse(log.blocked(user));
         }
     }
+
     @Test void reentrantTradeIsRejected() throws Exception {
         try (Journal log = new Journal(temp.resolve("tx.log"))) {
             UUID user = UUID.randomUUID(); TradeEngine engine = new TradeEngine(log); Inventory inventory = new Inventory();
@@ -84,18 +94,66 @@ class CoreTest {
             assertTrue(log.pending().isEmpty());
         }
     }
-    @Test void inventoryFailureStopsBeforeWalletAndLocksForReview() throws Exception {
+
+    @Test void transientPrePaymentFailureRollsBackWithoutWalletOrLock() throws Exception {
         try (Journal log = new Journal(temp.resolve("tx.log"))) {
-            UUID user = UUID.randomUUID();
-            Inventory inventory = new Inventory() { public void persist() { throw new IllegalStateException("save failed"); } };
-            assertThrows(IllegalStateException.class, () -> new TradeEngine(log).run(user, "SELL", inventory, () -> { fail("wallet must not be called"); return true; }));
+            UUID user = UUID.randomUUID(); AtomicBoolean walletCalled = new AtomicBoolean();
+            Inventory inventory = new Inventory() {
+                int calls;
+                @Override public void persist() {
+                    calls++;
+                    if (calls == 1) throw new IllegalStateException("temporary save failed");
+                    persisted++;
+                }
+            };
+            assertThrows(TradeEngine.SafeAbortException.class,
+                () -> new TradeEngine(log).run(user, "BUY", inventory, () -> { walletCalled.set(true); return true; }));
+            assertEquals(64, inventory.items);
+            assertFalse(walletCalled.get());
+            assertFalse(log.blocked(user));
+            assertTrue(log.pending().isEmpty());
+        }
+    }
+
+    @Test void unrecoverablePrePaymentFailureRestoresMemoryButKeepsReviewLock() throws Exception {
+        try (Journal log = new Journal(temp.resolve("tx.log"))) {
+            UUID user = UUID.randomUUID(); AtomicBoolean walletCalled = new AtomicBoolean();
+            Inventory inventory = new Inventory() { @Override public void persist() { throw new IllegalStateException("save failed"); } };
+            assertThrows(IllegalStateException.class,
+                () -> new TradeEngine(log).run(user, "SELL", inventory, () -> { walletCalled.set(true); return true; }));
+            assertEquals(64, inventory.items);
+            assertFalse(walletCalled.get());
             assertTrue(log.blocked(user));
         }
     }
+
     @Test void tornJournalFailsClosed() throws Exception {
         Path file = temp.resolve("tx.log"); Files.writeString(file, "truncated");
         assertThrows(java.io.IOException.class, () -> new Journal(file));
     }
+
+    @Test void orphanTerminalJournalRecordFailsClosed() throws Exception {
+        Path file = temp.resolve("tx.log"); UUID tx = UUID.randomUUID(), user = UUID.randomUUID();
+        Files.writeString(file, "2026-09-17T00:00:00Z\tCOMMIT\t" + tx + "\t" + user + "\tdone\n");
+        assertThrows(java.io.IOException.class, () -> new Journal(file));
+    }
+
+    @Test void mismatchedTerminalPlayerFailsClosed() throws Exception {
+        Path file = temp.resolve("tx.log"); UUID tx = UUID.randomUUID(), a = UUID.randomUUID(), b = UUID.randomUUID();
+        Files.writeString(file,
+            "2026-09-17T00:00:00Z\tBEGIN\t" + tx + "\t" + a + "\tBUY\n" +
+            "2026-09-17T00:00:01Z\tCOMMIT\t" + tx + "\t" + b + "\tdone\n");
+        assertThrows(java.io.IOException.class, () -> new Journal(file));
+    }
+
+    @Test void secondPendingTransactionForSamePlayerIsRejected() throws Exception {
+        try (Journal log = new Journal(temp.resolve("tx.log"))) {
+            UUID user = UUID.randomUUID();
+            log.begin(user, "BUY");
+            assertThrows(IllegalStateException.class, () -> log.begin(user, "SELL"));
+        }
+    }
+
     @Test void completedTransactionSurvivesRestart() throws Exception {
         UUID user = UUID.randomUUID(); Path file = temp.resolve("tx.log");
         try (Journal log = new Journal(file)) { UUID tx = log.begin(user, "BUY"); log.finish(tx, "COMMIT", "done"); }

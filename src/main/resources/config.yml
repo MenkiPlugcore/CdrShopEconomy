@@ -4,7 +4,14 @@
 access-mode: AUTO
 missing-citizens: COMMAND
 npc-max-distance: 6.0
+
 # Berlaku untuk konfirmasi jual/beli; tutup dan buka ulang jika kedaluwarsa.
 session-seconds: 120
+
+# 0 = matikan auto-restock. Selain 0: 10-86400 detik.
+# Tiap item finite-stock menentukan jumlah restock per cycle di file shop.
+restock-interval-seconds: 300
+
 # Harga per unit maksimal 1 miliar, dua digit desimal. -1 menonaktifkan sisi transaksi.
+# Dynamic pricing opsional memakai persentase 0-90 dan hanya boleh pada finite stock.
 # Tidak ada bypass OP untuk transaksi player. Editor admin punya permission sendiri.

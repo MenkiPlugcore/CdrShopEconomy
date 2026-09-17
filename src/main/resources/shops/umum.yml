@@ -1,14 +1,25 @@
 title: '&6Toko Umum'
 permission: ''
+category: umum
 items:
   wheat:
     material: WHEAT
     buy: '20.00'
     sell: '8.00'
+    stock:
+      max: 256
+      initial: 128
+      restock: 16
+    dynamic-percent: 25
   iron:
     material: IRON_INGOT
     buy: '120.00'
     sell: '75.00'
+    stock:
+      max: 128
+      initial: 64
+      restock: 8
+    dynamic-percent: 15
   stone:
     material: STONE
     buy: '4.00'

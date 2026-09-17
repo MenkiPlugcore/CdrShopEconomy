@@ -1,9 +1,9 @@
 name: CdrShopEconomy
-version: 1.0.0-beta.1
+version: 1.0.0-beta.2
 main: store.cadera.shop.CdrShopEconomy
 api-version: '1.21.11'
 author: CADERA
-description: MENKIESTES shop with command access and optional Citizens merchants.
+description: MENKIESTES living shop economy with command access and optional Citizens merchants.
 depend: [Vault]
 softdepend: [Citizens]
 commands:
