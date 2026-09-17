@@ -1,5 +1,5 @@
 name: CdrShopEconomy
-version: 1.0.0-beta.1
+version: 1.0.0-beta.2
 main: store.cadera.shop.CdrShopEconomy
 api-version: '1.21.11'
 author: CADERA
