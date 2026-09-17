@@ -2,7 +2,7 @@ package store.cadera.shop;
 
 import static org.junit.jupiter.api.Assertions.*;
 import java.nio.file.*;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
@@ -24,6 +24,14 @@ class CoreTest {
     @Test void noBuySellLoop() { assertThrows(IllegalArgumentException.class, () -> Money.validatePair(100, 101)); }
     @Test void disabledPricePairAllowed() { assertDoesNotThrow(() -> Money.validatePair(-1, 100)); }
 
+    @Test void finiteStockValidation() {
+        assertDoesNotThrow(() -> Catalog.validateStock(-1, -1));
+        assertDoesNotThrow(() -> Catalog.validateStock(256, 128));
+        assertThrows(IllegalArgumentException.class, () -> Catalog.validateStock(-1, 0));
+        assertThrows(IllegalArgumentException.class, () -> Catalog.validateStock(100, 101));
+        assertThrows(IllegalArgumentException.class, () -> Catalog.validateStock(-2, -2));
+    }
+
     static Stream<Arguments> routes() {
         return Stream.of(
             Arguments.of("AUTO", "COMMAND", false, false, "COMMAND"),
@@ -35,6 +43,7 @@ class CoreTest {
             Arguments.of("NPC_ONLY", "DISABLE", false, true, "DISABLED"),
             Arguments.of("COMMAND", "DISABLE", true, true, "COMMAND"));
     }
+
     @ParameterizedTest @MethodSource("routes")
     void accessRoutes(String mode, String missing, boolean citizens, boolean bound, String expected) {
         assertEquals(AccessPolicy.Route.valueOf(expected), AccessPolicy.route(AccessPolicy.Mode.valueOf(mode), AccessPolicy.Missing.valueOf(missing), citizens, bound));
@@ -47,20 +56,51 @@ class CoreTest {
         public void persist() { persisted++; }
     }
 
+    static class State implements TradeEngine.StatePort {
+        int value, before, after, persisted;
+        State(int before, int after) { this.value = before; this.before = before; this.after = after; }
+        public void apply() { value = after; }
+        public void restore() { value = before; }
+        public void persist() { persisted++; }
+    }
+
     @Test void successfulPaymentRemovesItemsAndCompletesJournal() throws Exception {
         try (Journal log = new Journal(temp.resolve("tx.log"))) {
             Inventory inventory = new Inventory(); UUID user = UUID.randomUUID();
             assertEquals(TradeEngine.Result.SUCCESS, new TradeEngine(log).run(user, "SELL", inventory, () -> true));
-            assertEquals(0, inventory.items); assertEquals(2, inventory.persisted); assertFalse(log.blocked(user));
+            assertEquals(0, inventory.items);
+            assertEquals(1, inventory.persisted);
+            assertFalse(log.blocked(user));
             assertTrue(log.pending().isEmpty());
         }
     }
 
-    @Test void failedPaymentRestoresItems() throws Exception {
+    @Test void successfulMultiStateTradePersistsInventoryAndStockBeforePayment() throws Exception {
+        try (Journal log = new Journal(temp.resolve("tx.log"))) {
+            UUID user = UUID.randomUUID();
+            Inventory inventory = new Inventory();
+            State stock = new State(100, 84);
+            assertEquals(TradeEngine.Result.SUCCESS,
+                new TradeEngine(log).run(user, "BUY stock=100->84", List.of(inventory, stock), () -> true));
+            assertEquals(0, inventory.items);
+            assertEquals(84, stock.value);
+            assertEquals(1, inventory.persisted);
+            assertEquals(1, stock.persisted);
+            assertTrue(log.pending().isEmpty());
+        }
+    }
+
+    @Test void failedPaymentRestoresAllStates() throws Exception {
         try (Journal log = new Journal(temp.resolve("tx.log"))) {
             Inventory inventory = new Inventory();
-            assertEquals(TradeEngine.Result.DECLINED, new TradeEngine(log).run(UUID.randomUUID(), "SELL", inventory, () -> false));
-            assertEquals(64, inventory.items); assertTrue(log.pending().isEmpty());
+            State stock = new State(100, 84);
+            assertEquals(TradeEngine.Result.DECLINED,
+                new TradeEngine(log).run(UUID.randomUUID(), "BUY", List.of(inventory, stock), () -> false));
+            assertEquals(64, inventory.items);
+            assertEquals(100, stock.value);
+            assertEquals(2, inventory.persisted);
+            assertEquals(2, stock.persisted);
+            assertTrue(log.pending().isEmpty());
         }
     }
 
@@ -69,7 +109,8 @@ class CoreTest {
         try (Journal log = new Journal(file)) {
             TradeEngine engine = new TradeEngine(log);
             assertThrows(Exception.class, () -> engine.run(user, "SELL", inventory, () -> { throw new Exception("timeout after debit"); }));
-            assertEquals(0, inventory.items); assertTrue(log.blocked(user));
+            assertEquals(0, inventory.items);
+            assertTrue(log.blocked(user));
             assertThrows(IllegalStateException.class, () -> engine.run(user, "SELL", inventory, () -> true));
         }
         try (Journal log = new Journal(file)) {
@@ -83,7 +124,8 @@ class CoreTest {
         try (Journal log = new Journal(temp.resolve("tx.log"))) {
             UUID user = UUID.randomUUID(); TradeEngine engine = new TradeEngine(log); Inventory inventory = new Inventory();
             engine.run(user, "SELL", inventory, () -> {
-                assertThrows(IllegalStateException.class, () -> engine.run(user, "SELL", inventory, () -> true)); return true;
+                assertThrows(IllegalStateException.class, () -> engine.run(user, "SELL", inventory, () -> true));
+                return true;
             });
             assertTrue(log.pending().isEmpty());
         }
@@ -101,7 +143,7 @@ class CoreTest {
                 }
             };
             assertThrows(IllegalStateException.class, () -> new TradeEngine(log).run(user, "BUY", inventory, () -> {
-                fail("wallet must not be called before inventory persistence succeeds"); return true;
+                fail("wallet must not be called before state persistence succeeds"); return true;
             }));
             assertEquals(64, inventory.items);
             assertFalse(log.blocked(user));
@@ -109,11 +151,32 @@ class CoreTest {
         }
     }
 
-    @Test void inventoryFailureThatCannotBeDurablyRolledBackStaysLocked() throws Exception {
+    @Test void laterStatePrePaymentFailureRollsBackEarlierStateToo() throws Exception {
+        try (Journal log = new Journal(temp.resolve("tx.log"))) {
+            UUID user = UUID.randomUUID();
+            State inventory = new State(64, 0);
+            State stock = new State(100, 84) {
+                int calls;
+                @Override public void persist() {
+                    calls++;
+                    if (calls == 1) throw new IllegalStateException("stock save failed");
+                    persisted++;
+                }
+            };
+            assertThrows(IllegalStateException.class,
+                () -> new TradeEngine(log).run(user, "BUY", List.of(inventory, stock), () -> { fail("wallet called"); return true; }));
+            assertEquals(64, inventory.value);
+            assertEquals(100, stock.value);
+            assertFalse(log.blocked(user));
+        }
+    }
+
+    @Test void stateFailureThatCannotBeDurablyRolledBackStaysLocked() throws Exception {
         try (Journal log = new Journal(temp.resolve("tx.log"))) {
             UUID user = UUID.randomUUID();
             Inventory inventory = new Inventory() { public void persist() { throw new IllegalStateException("save failed"); } };
-            assertThrows(IllegalStateException.class, () -> new TradeEngine(log).run(user, "SELL", inventory, () -> { fail("wallet must not be called"); return true; }));
+            assertThrows(IllegalStateException.class,
+                () -> new TradeEngine(log).run(user, "SELL", inventory, () -> { fail("wallet must not be called"); return true; }));
             assertTrue(log.blocked(user));
         }
     }
