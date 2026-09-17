@@ -32,6 +32,135 @@ class CoreTest {
         assertThrows(IllegalArgumentException.class, () -> Catalog.validateStock(-2, -2));
     }
 
+    private Catalog stockCatalog() throws Exception {
+        Path shops = temp.resolve("shops");
+        Files.createDirectories(shops);
+        Files.writeString(shops.resolve("umum.yml"), """
+            title: '&6Toko Test'
+            permission: ''
+            items:
+              wheat:
+                material: WHEAT
+                buy: '20.00'
+                sell: '8.00'
+                stock:
+                  max: 100
+                  initial: 40
+              stone:
+                material: STONE
+                buy: '4.00'
+                sell: '1.00'
+            """);
+        Catalog catalog = new Catalog(shops);
+        catalog.load();
+        return catalog;
+    }
+
+    private static Catalog.Product product(Catalog catalog, String id) {
+        return catalog.get("umum").products().stream().filter(p -> p.id().equals(id)).findFirst().orElseThrow();
+    }
+
+    @Test void stockInitializesAndSurvivesRestart() throws Exception {
+        Catalog catalog = stockCatalog();
+        Catalog.Product wheat = product(catalog, "wheat");
+        Catalog.Product stone = product(catalog, "stone");
+        Path file = temp.resolve("stock.yml");
+
+        StockLedger first = new StockLedger(file);
+        first.reconcile(catalog);
+        assertEquals(40, first.current("umum", wheat));
+        assertEquals("40/100", first.display("umum", wheat));
+        assertEquals("UNLIMITED", first.display("umum", stone));
+        assertEquals(1, first.finiteProducts());
+
+        first.set("umum", wheat, 73);
+        StockLedger restarted = new StockLedger(file);
+        restarted.reconcile(catalog);
+        assertEquals(73, restarted.current("umum", wheat));
+        assertEquals("73/100", restarted.display("umum", wheat));
+    }
+
+    @Test void stockPlanRejectsOversellAndOverbuyCapacity() throws Exception {
+        Catalog catalog = stockCatalog();
+        Catalog.Product wheat = product(catalog, "wheat");
+        StockLedger ledger = new StockLedger(temp.resolve("stock.yml"));
+        ledger.reconcile(catalog);
+        StockLedger.Key key = new StockLedger.Key("umum", "wheat");
+
+        assertThrows(IllegalArgumentException.class, () -> ledger.plan(Map.of(key, -41)));
+        assertThrows(IllegalArgumentException.class, () -> ledger.plan(Map.of(key, 61)));
+        assertTrue(ledger.canAdjust("umum", wheat, -40, Map.of()));
+        assertFalse(ledger.canAdjust("umum", wheat, -41, Map.of()));
+        assertTrue(ledger.canAdjust("umum", wheat, 60, Map.of()));
+        assertFalse(ledger.canAdjust("umum", wheat, 61, Map.of()));
+    }
+
+    @Test void committedBuyDecrementsDurableStock() throws Exception {
+        Catalog catalog = stockCatalog();
+        Catalog.Product wheat = product(catalog, "wheat");
+        Path stockFile = temp.resolve("stock.yml");
+        StockLedger ledger = new StockLedger(stockFile);
+        ledger.reconcile(catalog);
+        StockLedger.Change change = ledger.plan(Map.of(new StockLedger.Key("umum", "wheat"), -16));
+
+        try (Journal journal = new Journal(temp.resolve("tx.log"))) {
+            assertEquals(TradeEngine.Result.SUCCESS,
+                new TradeEngine(journal).run(UUID.randomUUID(), "BUY wheat 16", List.of(change), () -> true));
+        }
+        assertEquals(24, ledger.current("umum", wheat));
+
+        StockLedger restarted = new StockLedger(stockFile);
+        restarted.reconcile(catalog);
+        assertEquals(24, restarted.current("umum", wheat));
+    }
+
+    @Test void declinedBuyRestoresDurableStock() throws Exception {
+        Catalog catalog = stockCatalog();
+        Catalog.Product wheat = product(catalog, "wheat");
+        Path stockFile = temp.resolve("stock.yml");
+        StockLedger ledger = new StockLedger(stockFile);
+        ledger.reconcile(catalog);
+        StockLedger.Change change = ledger.plan(Map.of(new StockLedger.Key("umum", "wheat"), -16));
+
+        try (Journal journal = new Journal(temp.resolve("tx.log"))) {
+            assertEquals(TradeEngine.Result.DECLINED,
+                new TradeEngine(journal).run(UUID.randomUUID(), "BUY wheat 16", List.of(change), () -> false));
+        }
+        assertEquals(40, ledger.current("umum", wheat));
+
+        StockLedger restarted = new StockLedger(stockFile);
+        restarted.reconcile(catalog);
+        assertEquals(40, restarted.current("umum", wheat));
+    }
+
+    @Test void committedSellIncreasesStockUpToCapacity() throws Exception {
+        Catalog catalog = stockCatalog();
+        Catalog.Product wheat = product(catalog, "wheat");
+        Path stockFile = temp.resolve("stock.yml");
+        StockLedger ledger = new StockLedger(stockFile);
+        ledger.reconcile(catalog);
+        StockLedger.Key key = new StockLedger.Key("umum", "wheat");
+        StockLedger.Change change = ledger.plan(Map.of(key, 60));
+
+        try (Journal journal = new Journal(temp.resolve("tx.log"))) {
+            assertEquals(TradeEngine.Result.SUCCESS,
+                new TradeEngine(journal).run(UUID.randomUUID(), "SELL wheat 60", List.of(change), () -> true));
+        }
+        assertEquals(100, ledger.current("umum", wheat));
+        assertThrows(IllegalArgumentException.class, () -> ledger.plan(Map.of(key, 1)));
+    }
+
+    @Test void corruptOrOutOfRangeRuntimeStockFailsClosed() throws Exception {
+        Catalog catalog = stockCatalog();
+        Path stockFile = temp.resolve("stock.yml");
+        Files.writeString(stockFile, "stock:\n  umum:\n    wheat: 101\n");
+        StockLedger ledger = new StockLedger(stockFile);
+        assertThrows(IllegalArgumentException.class, () -> ledger.reconcile(catalog));
+
+        Files.writeString(stockFile, "stock:\n  umum:\n    wheat: nope\n");
+        assertThrows(IllegalArgumentException.class, () -> ledger.reconcile(catalog));
+    }
+
     static Stream<Arguments> routes() {
         return Stream.of(
             Arguments.of("AUTO", "COMMAND", false, false, "COMMAND"),
