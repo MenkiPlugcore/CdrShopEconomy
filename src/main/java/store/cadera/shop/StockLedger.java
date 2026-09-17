@@ -2,7 +2,6 @@ package store.cadera.shop;
 
 import java.nio.file.*;
 import java.util.*;
-import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 
 /**
@@ -65,11 +64,13 @@ final class StockLedger {
                 nextLimits.put(key, product.maxStock());
             }
         }
+
+        // Persist the candidate first. If storage fails, the active in-memory ledger remains unchanged.
+        saveMap(next);
         current.clear();
         current.putAll(next);
         limits.clear();
         limits.putAll(nextLimits);
-        save(); // Canonicalize and prune entries for products that no longer exist / are unlimited.
     }
 
     int current(String shop, Catalog.Product product) {
@@ -82,19 +83,8 @@ final class StockLedger {
         return amount;
     }
 
-    int max(String shop, Catalog.Product product) {
-        return product.finiteStock() ? product.maxStock() : Catalog.UNLIMITED_STOCK;
-    }
-
     String display(String shop, Catalog.Product product) {
         return product.finiteStock() ? current(shop, product) + "/" + product.maxStock() : "UNLIMITED";
-    }
-
-    boolean canAdjust(String shop, Catalog.Product product, int delta) {
-        if (!product.finiteStock()) return true;
-        Key key = new Key(shop, product.id());
-        long next = (long) current(shop, product) + delta;
-        return next >= 0 && next <= limits.get(key);
     }
 
     boolean canAdjust(String shop, Catalog.Product product, int delta, Map<Key, Integer> pendingDeltas) {
@@ -139,9 +129,13 @@ final class StockLedger {
         }
     }
 
-    private void save() throws Exception {
+    int finiteProducts() { return current.size(); }
+
+    private void save() throws Exception { saveMap(current); }
+
+    private void saveMap(Map<Key, Integer> values) throws Exception {
         YamlConfiguration yaml = new YamlConfiguration();
-        for (var entry : current.entrySet()) yaml.set(node(entry.getKey()), entry.getValue());
+        for (var entry : values.entrySet()) yaml.set(node(entry.getKey()), entry.getValue());
         Filesafe.save(yaml, path);
     }
 
