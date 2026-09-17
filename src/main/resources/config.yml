@@ -1,0 +1,10 @@
+# AUTO: Citizens aktif + ada binding NPC => semua akses player wajib NPC.
+# COMMAND: command saja. NPC_ONLY: selalu wajib NPC bila Citizens tersedia.
+# Citizens tidak tersedia: COMMAND fallback atau DISABLE (cocok RP ketat).
+access-mode: AUTO
+missing-citizens: COMMAND
+npc-max-distance: 6.0
+# Berlaku untuk konfirmasi jual/beli; tutup dan buka ulang jika kedaluwarsa.
+session-seconds: 120
+# Harga per unit maksimal 1 miliar, dua digit desimal. -1 menonaktifkan sisi transaksi.
+# Tidak ada bypass OP untuk transaksi player. Editor admin punya permission sendiri.

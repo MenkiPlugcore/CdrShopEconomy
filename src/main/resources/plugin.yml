@@ -1,0 +1,26 @@
+name: CdrShopEconomy
+version: 1.0.0-beta.1
+main: store.cadera.shop.CdrShopEconomy
+api-version: '1.21.11'
+author: CADERA
+description: MENKIESTES shop with command access and optional Citizens merchants.
+depend: [Vault]
+softdepend: [Citizens]
+commands:
+  toko:
+    description: Buka toko
+    permission: cdrshopeconomy.use
+  jualgui:
+    description: Pilih item inventory dan konfirmasi penjualan
+    permission: cdrshopeconomy.use
+  jual:
+    description: Jual seluruh stack di tangan utama
+    permission: cdrshopeconomy.use
+  cdrshop:
+    description: Administrasi CdrShopEconomy
+    permission: cdrshopeconomy.admin
+permissions:
+  cdrshopeconomy.use:
+    default: true
+  cdrshopeconomy.admin:
+    default: op
