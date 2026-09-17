@@ -46,6 +46,7 @@ class CoreTest {
         public void restore() { items = 64; }
         public void persist() { persisted++; }
     }
+
     @Test void successfulPaymentRemovesItemsAndCompletesJournal() throws Exception {
         try (Journal log = new Journal(temp.resolve("tx.log"))) {
             Inventory inventory = new Inventory(); UUID user = UUID.randomUUID();
@@ -54,6 +55,7 @@ class CoreTest {
             assertTrue(log.pending().isEmpty());
         }
     }
+
     @Test void failedPaymentRestoresItems() throws Exception {
         try (Journal log = new Journal(temp.resolve("tx.log"))) {
             Inventory inventory = new Inventory();
@@ -61,6 +63,7 @@ class CoreTest {
             assertEquals(64, inventory.items); assertTrue(log.pending().isEmpty());
         }
     }
+
     @Test void unknownPaymentDoesNotDuplicateAndLocksPlayerAcrossRestart() throws Exception {
         UUID user = UUID.randomUUID(); Path file = temp.resolve("tx.log"); Inventory inventory = new Inventory();
         try (Journal log = new Journal(file)) {
@@ -75,6 +78,7 @@ class CoreTest {
             assertFalse(log.blocked(user));
         }
     }
+
     @Test void reentrantTradeIsRejected() throws Exception {
         try (Journal log = new Journal(temp.resolve("tx.log"))) {
             UUID user = UUID.randomUUID(); TradeEngine engine = new TradeEngine(log); Inventory inventory = new Inventory();
@@ -84,7 +88,28 @@ class CoreTest {
             assertTrue(log.pending().isEmpty());
         }
     }
-    @Test void inventoryFailureStopsBeforeWalletAndLocksForReview() throws Exception {
+
+    @Test void transientPrePaymentPersistFailureRollsBackWithoutCallingWallet() throws Exception {
+        try (Journal log = new Journal(temp.resolve("tx.log"))) {
+            UUID user = UUID.randomUUID();
+            Inventory inventory = new Inventory() {
+                int calls;
+                @Override public void persist() {
+                    calls++;
+                    if (calls == 1) throw new IllegalStateException("first save failed");
+                    persisted++;
+                }
+            };
+            assertThrows(IllegalStateException.class, () -> new TradeEngine(log).run(user, "BUY", inventory, () -> {
+                fail("wallet must not be called before inventory persistence succeeds"); return true;
+            }));
+            assertEquals(64, inventory.items);
+            assertFalse(log.blocked(user));
+            assertTrue(log.pending().isEmpty());
+        }
+    }
+
+    @Test void inventoryFailureThatCannotBeDurablyRolledBackStaysLocked() throws Exception {
         try (Journal log = new Journal(temp.resolve("tx.log"))) {
             UUID user = UUID.randomUUID();
             Inventory inventory = new Inventory() { public void persist() { throw new IllegalStateException("save failed"); } };
@@ -92,10 +117,19 @@ class CoreTest {
             assertTrue(log.blocked(user));
         }
     }
+
     @Test void tornJournalFailsClosed() throws Exception {
         Path file = temp.resolve("tx.log"); Files.writeString(file, "truncated");
         assertThrows(java.io.IOException.class, () -> new Journal(file));
     }
+
+    @Test void orphanTerminalJournalRecordFailsClosed() throws Exception {
+        Path file = temp.resolve("tx.log");
+        UUID tx = UUID.randomUUID(), user = UUID.randomUUID();
+        Files.writeString(file, "2026-09-17T00:00:00Z\tCOMMIT\t" + tx + "\t" + user + "\tdone\n");
+        assertThrows(java.io.IOException.class, () -> new Journal(file));
+    }
+
     @Test void completedTransactionSurvivesRestart() throws Exception {
         UUID user = UUID.randomUUID(); Path file = temp.resolve("tx.log");
         try (Journal log = new Journal(file)) { UUID tx = log.begin(user, "BUY"); log.finish(tx, "COMMIT", "done"); }
