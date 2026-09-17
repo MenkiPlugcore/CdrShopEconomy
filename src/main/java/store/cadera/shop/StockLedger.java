@@ -57,7 +57,14 @@ final class StockLedger {
                 if (!product.finiteStock()) continue;
                 Key key = new Key(shop.id(), product.id());
                 String configPath = node(key);
-                int amount = yaml.contains(configPath) ? yaml.getInt(configPath) : product.initialStock();
+                int amount;
+                if (yaml.contains(configPath)) {
+                    if (!yaml.isInt(configPath))
+                        throw new IllegalArgumentException("Runtime stock " + key + " harus integer di stock.yml.");
+                    amount = yaml.getInt(configPath);
+                } else {
+                    amount = product.initialStock();
+                }
                 if (amount < 0 || amount > product.maxStock())
                     throw new IllegalArgumentException("Runtime stock " + key + " = " + amount + " di luar batas 0-" + product.maxStock() + ". Perbaiki stock.yml atau limit produk.");
                 next.put(key, amount);
