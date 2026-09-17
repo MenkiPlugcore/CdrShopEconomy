@@ -5,10 +5,16 @@ items:
     material: WHEAT
     buy: '20.00'
     sell: '8.00'
+    stock:
+      max: 512
+      initial: 256
   iron:
     material: IRON_INGOT
     buy: '120.00'
     sell: '75.00'
+    stock:
+      max: 128
+      initial: 64
   stone:
     material: STONE
     buy: '4.00'
