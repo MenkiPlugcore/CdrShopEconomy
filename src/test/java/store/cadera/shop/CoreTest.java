@@ -32,133 +32,91 @@ class CoreTest {
         assertThrows(IllegalArgumentException.class, () -> Catalog.validateStock(-2, -2));
     }
 
-    private Catalog stockCatalog() throws Exception {
-        Path shops = temp.resolve("shops");
-        Files.createDirectories(shops);
-        Files.writeString(shops.resolve("umum.yml"), """
-            title: '&6Toko Test'
-            permission: ''
-            items:
-              wheat:
-                material: WHEAT
-                buy: '20.00'
-                sell: '8.00'
-                stock:
-                  max: 100
-                  initial: 40
-              stone:
-                material: STONE
-                buy: '4.00'
-                sell: '1.00'
-            """);
-        Catalog catalog = new Catalog(shops);
-        catalog.load();
-        return catalog;
-    }
-
-    private static Catalog.Product product(Catalog catalog, String id) {
-        return catalog.get("umum").products().stream().filter(p -> p.id().equals(id)).findFirst().orElseThrow();
-    }
+    private static final StockLedger.Key WHEAT = new StockLedger.Key("umum", "wheat");
+    private static final Map<StockLedger.Key, StockLedger.Spec> STOCK_SPEC =
+        Map.of(WHEAT, new StockLedger.Spec(100, 40));
 
     @Test void stockInitializesAndSurvivesRestart() throws Exception {
-        Catalog catalog = stockCatalog();
-        Catalog.Product wheat = product(catalog, "wheat");
-        Catalog.Product stone = product(catalog, "stone");
         Path file = temp.resolve("stock.yml");
-
         StockLedger first = new StockLedger(file);
-        first.reconcile(catalog);
-        assertEquals(40, first.current("umum", wheat));
-        assertEquals("40/100", first.display("umum", wheat));
-        assertEquals("UNLIMITED", first.display("umum", stone));
+        first.reconcile(STOCK_SPEC);
+        assertEquals(40, first.current(WHEAT));
         assertEquals(1, first.finiteProducts());
 
-        first.set("umum", wheat, 73);
+        first.set(WHEAT, 73);
         StockLedger restarted = new StockLedger(file);
-        restarted.reconcile(catalog);
-        assertEquals(73, restarted.current("umum", wheat));
-        assertEquals("73/100", restarted.display("umum", wheat));
+        restarted.reconcile(STOCK_SPEC);
+        assertEquals(73, restarted.current(WHEAT));
     }
 
     @Test void stockPlanRejectsOversellAndOverbuyCapacity() throws Exception {
-        Catalog catalog = stockCatalog();
-        Catalog.Product wheat = product(catalog, "wheat");
         StockLedger ledger = new StockLedger(temp.resolve("stock.yml"));
-        ledger.reconcile(catalog);
-        StockLedger.Key key = new StockLedger.Key("umum", "wheat");
+        ledger.reconcile(STOCK_SPEC);
 
-        assertThrows(IllegalArgumentException.class, () -> ledger.plan(Map.of(key, -41)));
-        assertThrows(IllegalArgumentException.class, () -> ledger.plan(Map.of(key, 61)));
-        assertTrue(ledger.canAdjust("umum", wheat, -40, Map.of()));
-        assertFalse(ledger.canAdjust("umum", wheat, -41, Map.of()));
-        assertTrue(ledger.canAdjust("umum", wheat, 60, Map.of()));
-        assertFalse(ledger.canAdjust("umum", wheat, 61, Map.of()));
+        assertThrows(IllegalArgumentException.class, () -> ledger.plan(Map.of(WHEAT, -41)));
+        assertThrows(IllegalArgumentException.class, () -> ledger.plan(Map.of(WHEAT, 61)));
+        assertTrue(ledger.canAdjust(WHEAT, -40, Map.of()));
+        assertFalse(ledger.canAdjust(WHEAT, -41, Map.of()));
+        assertTrue(ledger.canAdjust(WHEAT, 60, Map.of()));
+        assertFalse(ledger.canAdjust(WHEAT, 61, Map.of()));
     }
 
     @Test void committedBuyDecrementsDurableStock() throws Exception {
-        Catalog catalog = stockCatalog();
-        Catalog.Product wheat = product(catalog, "wheat");
         Path stockFile = temp.resolve("stock.yml");
         StockLedger ledger = new StockLedger(stockFile);
-        ledger.reconcile(catalog);
-        StockLedger.Change change = ledger.plan(Map.of(new StockLedger.Key("umum", "wheat"), -16));
+        ledger.reconcile(STOCK_SPEC);
+        StockLedger.Change change = ledger.plan(Map.of(WHEAT, -16));
 
         try (Journal journal = new Journal(temp.resolve("tx.log"))) {
             assertEquals(TradeEngine.Result.SUCCESS,
                 new TradeEngine(journal).run(UUID.randomUUID(), "BUY wheat 16", List.of(change), () -> true));
         }
-        assertEquals(24, ledger.current("umum", wheat));
+        assertEquals(24, ledger.current(WHEAT));
 
         StockLedger restarted = new StockLedger(stockFile);
-        restarted.reconcile(catalog);
-        assertEquals(24, restarted.current("umum", wheat));
+        restarted.reconcile(STOCK_SPEC);
+        assertEquals(24, restarted.current(WHEAT));
     }
 
     @Test void declinedBuyRestoresDurableStock() throws Exception {
-        Catalog catalog = stockCatalog();
-        Catalog.Product wheat = product(catalog, "wheat");
         Path stockFile = temp.resolve("stock.yml");
         StockLedger ledger = new StockLedger(stockFile);
-        ledger.reconcile(catalog);
-        StockLedger.Change change = ledger.plan(Map.of(new StockLedger.Key("umum", "wheat"), -16));
+        ledger.reconcile(STOCK_SPEC);
+        StockLedger.Change change = ledger.plan(Map.of(WHEAT, -16));
 
         try (Journal journal = new Journal(temp.resolve("tx.log"))) {
             assertEquals(TradeEngine.Result.DECLINED,
                 new TradeEngine(journal).run(UUID.randomUUID(), "BUY wheat 16", List.of(change), () -> false));
         }
-        assertEquals(40, ledger.current("umum", wheat));
+        assertEquals(40, ledger.current(WHEAT));
 
         StockLedger restarted = new StockLedger(stockFile);
-        restarted.reconcile(catalog);
-        assertEquals(40, restarted.current("umum", wheat));
+        restarted.reconcile(STOCK_SPEC);
+        assertEquals(40, restarted.current(WHEAT));
     }
 
     @Test void committedSellIncreasesStockUpToCapacity() throws Exception {
-        Catalog catalog = stockCatalog();
-        Catalog.Product wheat = product(catalog, "wheat");
         Path stockFile = temp.resolve("stock.yml");
         StockLedger ledger = new StockLedger(stockFile);
-        ledger.reconcile(catalog);
-        StockLedger.Key key = new StockLedger.Key("umum", "wheat");
-        StockLedger.Change change = ledger.plan(Map.of(key, 60));
+        ledger.reconcile(STOCK_SPEC);
+        StockLedger.Change change = ledger.plan(Map.of(WHEAT, 60));
 
         try (Journal journal = new Journal(temp.resolve("tx.log"))) {
             assertEquals(TradeEngine.Result.SUCCESS,
                 new TradeEngine(journal).run(UUID.randomUUID(), "SELL wheat 60", List.of(change), () -> true));
         }
-        assertEquals(100, ledger.current("umum", wheat));
-        assertThrows(IllegalArgumentException.class, () -> ledger.plan(Map.of(key, 1)));
+        assertEquals(100, ledger.current(WHEAT));
+        assertThrows(IllegalArgumentException.class, () -> ledger.plan(Map.of(WHEAT, 1)));
     }
 
     @Test void corruptOrOutOfRangeRuntimeStockFailsClosed() throws Exception {
-        Catalog catalog = stockCatalog();
         Path stockFile = temp.resolve("stock.yml");
         Files.writeString(stockFile, "stock:\n  umum:\n    wheat: 101\n");
         StockLedger ledger = new StockLedger(stockFile);
-        assertThrows(IllegalArgumentException.class, () -> ledger.reconcile(catalog));
+        assertThrows(IllegalArgumentException.class, () -> ledger.reconcile(STOCK_SPEC));
 
         Files.writeString(stockFile, "stock:\n  umum:\n    wheat: nope\n");
-        assertThrows(IllegalArgumentException.class, () -> ledger.reconcile(catalog));
+        assertThrows(IllegalArgumentException.class, () -> ledger.reconcile(STOCK_SPEC));
     }
 
     static Stream<Arguments> routes() {
