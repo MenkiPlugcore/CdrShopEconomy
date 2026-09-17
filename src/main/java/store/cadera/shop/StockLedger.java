@@ -17,6 +17,10 @@ final class StockLedger {
         @Override public String toString() { return shop + "/" + product; }
     }
 
+    record Spec(int max, int initial) {
+        Spec { Catalog.validateStock(max, initial); }
+    }
+
     final class Change implements TradeEngine.StatePort {
         private final Map<Key, Integer> before;
         private final Map<Key, Integer> after;
@@ -47,29 +51,39 @@ final class StockLedger {
     StockLedger(Path path) { this.path = path; }
 
     void reconcile(Catalog catalog) throws Exception {
+        Map<Key, Spec> specs = new LinkedHashMap<>();
+        for (Catalog.Shop shop : catalog.all()) {
+            for (Catalog.Product product : shop.products()) {
+                if (product.finiteStock())
+                    specs.put(new Key(shop.id(), product.id()), new Spec(product.maxStock(), product.initialStock()));
+            }
+        }
+        reconcile(specs);
+    }
+
+    void reconcile(Map<Key, Spec> specs) throws Exception {
+        Objects.requireNonNull(specs, "specs");
         YamlConfiguration yaml = new YamlConfiguration();
         if (Files.exists(path)) yaml.load(path.toFile());
 
         Map<Key, Integer> next = new LinkedHashMap<>();
         Map<Key, Integer> nextLimits = new LinkedHashMap<>();
-        for (Catalog.Shop shop : catalog.all()) {
-            for (Catalog.Product product : shop.products()) {
-                if (!product.finiteStock()) continue;
-                Key key = new Key(shop.id(), product.id());
-                String configPath = node(key);
-                int amount;
-                if (yaml.contains(configPath)) {
-                    if (!yaml.isInt(configPath))
-                        throw new IllegalArgumentException("Runtime stock " + key + " harus integer di stock.yml.");
-                    amount = yaml.getInt(configPath);
-                } else {
-                    amount = product.initialStock();
-                }
-                if (amount < 0 || amount > product.maxStock())
-                    throw new IllegalArgumentException("Runtime stock " + key + " = " + amount + " di luar batas 0-" + product.maxStock() + ". Perbaiki stock.yml atau limit produk.");
-                next.put(key, amount);
-                nextLimits.put(key, product.maxStock());
+        for (var entry : specs.entrySet()) {
+            Key key = Objects.requireNonNull(entry.getKey(), "stock key");
+            Spec spec = Objects.requireNonNull(entry.getValue(), "stock spec");
+            String configPath = node(key);
+            int amount;
+            if (yaml.contains(configPath)) {
+                if (!yaml.isInt(configPath))
+                    throw new IllegalArgumentException("Runtime stock " + key + " harus integer di stock.yml.");
+                amount = yaml.getInt(configPath);
+            } else {
+                amount = spec.initial();
             }
+            if (amount < 0 || amount > spec.max())
+                throw new IllegalArgumentException("Runtime stock " + key + " = " + amount + " di luar batas 0-" + spec.max() + ". Perbaiki stock.yml atau limit produk.");
+            next.put(key, amount);
+            nextLimits.put(key, spec.max());
         }
 
         // Persist the candidate first. If storage fails, the active in-memory ledger remains unchanged.
@@ -82,10 +96,19 @@ final class StockLedger {
 
     int current(String shop, Catalog.Product product) {
         if (!product.finiteStock()) return Catalog.UNLIMITED_STOCK;
-        Key key = new Key(shop, product.id());
+        return current(new Key(shop, product.id()), product.maxStock());
+    }
+
+    int current(Key key) {
+        Integer amount = current.get(key);
+        if (amount == null) throw new IllegalStateException("Stock ledger belum sinkron untuk " + key + ".");
+        return amount;
+    }
+
+    private int current(Key key, int expectedLimit) {
         Integer amount = current.get(key);
         Integer limit = limits.get(key);
-        if (amount == null || limit == null || limit != product.maxStock())
+        if (amount == null || limit == null || limit != expectedLimit)
             throw new IllegalStateException("Stock ledger belum sinkron untuk " + key + ". Reload atau periksa konfigurasi.");
         return amount;
     }
@@ -99,6 +122,13 @@ final class StockLedger {
         Key key = new Key(shop, product.id());
         long next = (long) current(shop, product) + pendingDeltas.getOrDefault(key, 0) + delta;
         return next >= 0 && next <= limits.get(key);
+    }
+
+    boolean canAdjust(Key key, int delta, Map<Key, Integer> pendingDeltas) {
+        Integer limit = limits.get(key);
+        if (limit == null) throw new IllegalArgumentException("Produk " + key + " tidak memakai finite stock.");
+        long next = (long) current(key) + pendingDeltas.getOrDefault(key, 0) + delta;
+        return next >= 0 && next <= limit;
     }
 
     Change plan(Map<Key, Integer> deltas) {
@@ -123,10 +153,13 @@ final class StockLedger {
 
     void set(String shop, Catalog.Product product, int amount) throws Exception {
         if (!product.finiteStock()) throw new IllegalArgumentException("Produk ini unlimited. Gunakan stocklimit untuk mengaktifkan finite stock.");
-        if (amount < 0 || amount > product.maxStock())
-            throw new IllegalArgumentException("Stock harus 0-" + product.maxStock() + ".");
-        Key key = new Key(shop, product.id());
-        if (!current.containsKey(key)) throw new IllegalStateException("Stock ledger belum sinkron untuk " + key + ".");
+        set(new Key(shop, product.id()), amount);
+    }
+
+    void set(Key key, int amount) throws Exception {
+        Integer max = limits.get(key);
+        if (max == null) throw new IllegalStateException("Stock ledger belum sinkron untuk " + key + ".");
+        if (amount < 0 || amount > max) throw new IllegalArgumentException("Stock harus 0-" + max + ".");
         int old = current.get(key);
         current.put(key, amount);
         try { save(); }
