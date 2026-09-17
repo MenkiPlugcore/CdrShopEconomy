@@ -12,18 +12,51 @@ final class TradeEngine {
     private final Journal journal;
     private final Set<UUID> busy = new HashSet<>();
     TradeEngine(Journal journal) { this.journal = journal; }
+
     Result run(UUID player, String detail, InventoryPort inventory, Payment payment) throws Exception {
-        if (journal.blocked(player) || !busy.add(player)) throw new IllegalStateException("Transaksi terkunci; hubungi admin untuk review journal.");
+        if (journal.blocked(player) || !busy.add(player))
+            throw new IllegalStateException("Transaksi terkunci; hubungi admin untuk review journal.");
+
+        UUID tx = null;
+        boolean paymentStarted = false;
         try {
-            UUID tx = journal.begin(player, detail);
-            inventory.apply(); inventory.persist();
-            // A thrown exception is ambiguous: do not restore or pay again automatically.
+            tx = journal.begin(player, detail);
+            try {
+                inventory.apply();
+                inventory.persist();
+            } catch (Exception prePaymentFailure) {
+                // Wallet has definitely not been touched yet. Roll back aggressively instead of
+                // leaving changed inventory around just because persistence failed.
+                try {
+                    inventory.restore();
+                    inventory.persist();
+                    journal.finish(tx, "ABORT", "pre-payment-failure-rolled-back");
+                } catch (Exception rollbackFailure) {
+                    prePaymentFailure.addSuppressed(rollbackFailure);
+                    // Keep journal entry pending. Manual review is required because rollback durability
+                    // could not be proven.
+                }
+                throw prePaymentFailure;
+            }
+
+            paymentStarted = true;
             if (!payment.execute()) {
-                inventory.restore(); inventory.persist(); journal.finish(tx, "ABORT", "wallet-declined");
+                inventory.restore();
+                inventory.persist();
+                journal.finish(tx, "ABORT", "wallet-declined");
                 return Result.DECLINED;
             }
-            inventory.persist(); journal.finish(tx, "COMMIT", "success");
+
+            inventory.persist();
+            journal.finish(tx, "COMMIT", "success");
             return Result.SUCCESS;
-        } finally { busy.remove(player); }
+        } catch (Exception failure) {
+            // Once payment execution has started, an exception may mean the provider changed money
+            // before failing. Never auto-retry or auto-restore that ambiguous outcome.
+            if (paymentStarted) throw failure;
+            throw failure;
+        } finally {
+            busy.remove(player);
+        }
     }
 }
