@@ -1,0 +1,51 @@
+MENKIESTES SOFTWARE LICENSE
+Version 1.0 — 2026
+
+Copyright (c) 2026 CADERA. All Rights Reserved.
+MENKIESTES is created by CADERA.
+
+This license applies to the original source code, documentation, configuration, artwork, and other original materials in this repository that are authored by or owned by CADERA (collectively, the "Software").
+
+1. OWNERSHIP
+The Software is proprietary. Except for the limited permissions expressly granted below, no rights, title, or interest in the Software are transferred to any person or entity.
+
+2. LIMITED PERMITTED USE
+If this repository is publicly accessible, you may view the source code and may download, run, and privately modify the Software solely for personal, non-commercial evaluation, learning, testing, or for preparing a contribution to the official repository.
+
+No permission is granted for commercial, production, hosted-service, resale, redistribution, or public derivative use unless CADERA gives prior written permission.
+
+3. RESTRICTIONS
+Without prior written permission from CADERA, you may not:
+- sell, resell, rent, sublicense, monetize, or commercially exploit the Software;
+- redistribute, re-upload, mirror, republish, or publicly share the Software or a substantial portion of it;
+- distribute modified or derivative versions of the Software;
+- remove, hide, alter, or misrepresent copyright, attribution, branding, authorship, or license notices;
+- claim the Software, MENKIESTES, or work created by CADERA as your own;
+- use the names, logos, trademarks, or branding of MENKIESTES or CADERA in a way that implies ownership, sponsorship, endorsement, or official affiliation without permission;
+- use the Software to provide a paid product, paid service, hosted service, or commercial offering without permission.
+
+4. CONTRIBUTIONS
+By intentionally submitting a contribution to an official repository owned by CADERA, you grant CADERA a perpetual, worldwide, royalty-free, irrevocable, transferable, and sublicensable license to use, reproduce, modify, distribute, relicense, and incorporate that contribution into MENKIESTES or other CADERA projects. This does not transfer ownership of unrelated work that you did not submit.
+
+5. THIRD-PARTY MATERIALS
+Third-party libraries, assets, code, fonts, APIs, dependencies, and other components remain subject to their respective licenses and terms. This license does not override or remove rights granted by third-party licenses.
+
+6. COMMERCIAL PERMISSION
+Commercial use requires explicit prior written permission from CADERA. Permission may include additional terms, fees, attribution requirements, scope limitations, or a separate commercial license.
+
+7. TERMINATION
+Any permission granted under this license automatically terminates if you violate its terms. After termination, you must stop using and distributing the affected Software, except where another applicable license independently grants you rights.
+
+8. NO WARRANTY
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, AVAILABILITY, SECURITY, OR ERROR-FREE OPERATION.
+
+9. LIMITATION OF LIABILITY
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, CADERA SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGE, LOSS, OR OTHER LIABILITY ARISING FROM OR RELATED TO THE SOFTWARE OR ITS USE.
+
+10. PRIOR VERSIONS AND PRIOR LICENSES
+This license governs versions of the Software distributed under this license from the commit or release in which it is added. Rights that were validly granted for earlier versions under a different license are not retroactively revoked for copies already received under that earlier license.
+
+11. PERMISSION REQUESTS
+Requests for permissions not granted by this license must be made to CADERA through an official repository or another official contact channel controlled by CADERA.
+
+Source available does not mean open source. Unless a separate license explicitly states otherwise, all rights not expressly granted above are reserved.
