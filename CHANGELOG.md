@@ -2,17 +2,18 @@
 
 ## 1.0.0-beta.2
 
-- Audit-first stability release before adding finite stock and dynamic pricing.
-- Pre-payment inventory persistence failures now attempt a safe rollback before Vault is called.
-- A successful pre-payment rollback closes the journal entry as ABORT instead of unnecessarily locking the player.
-- If rollback durability cannot be proven, the player remains locked for manual review.
-- Once Vault execution begins, exceptions remain fail-closed because the external payment outcome can be ambiguous.
-- Journal replay now rejects duplicate BEGIN records and terminal records without a matching BEGIN/player.
-- Journal details have a size guard to prevent pathological synchronous disk writes.
-- Added regression tests for transient pre-payment save failure and orphan journal terminal records.
-- Maven/plugin/build artifact metadata bumped to 1.0.0-beta.2.
+- Hardened transaction rollback before Vault payment begins: inventory/stock state is restored when persistence fails before payment execution.
+- Journal replay now rejects duplicate BEGIN and orphan/mismatched terminal records and limits oversized detail payloads.
+- Added transaction-safe finite stock engine backed by durable `stock.yml` runtime state.
+- Products remain unlimited by default for backward compatibility; finite stock is enabled per listing with max/initial values.
+- BUY decrements merchant stock; SELL increases merchant stock up to capacity.
+- Global selling can fall back to another eligible shop when a higher-paying merchant has insufficient stock capacity.
+- Shop/editor GUI displays live stock and blocks unavailable purchase quantities.
+- Added `/cdrshop stock <shop> <id> [amount]` and `/cdrshop stocklimit <shop> <id> unlimited|<max> [initial]`.
+- Reload/restart preserves runtime stock and fails closed on corrupt or out-of-range stock data.
+- Expanded regression coverage to 46 passing tests, including durable stock restart, buy commit, declined-payment rollback, sell capacity and malformed stock state.
 
-Finite stock, restock, categories, dynamic pricing, transaction-history UI and custom-item adapters remain planned after the transaction foundation is verified.
+Still not included: automatic timed restock, dynamic prices, contracts, reputation, economy events, Bedrock Forms or dedicated custom-item-provider adapters.
 
 ## 1.0.0-beta.1
 
