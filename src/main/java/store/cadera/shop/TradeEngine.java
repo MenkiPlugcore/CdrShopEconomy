@@ -4,13 +4,17 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 
-/** Caller must run on the main server thread. Inventory mutation and wallet call never run async. */
+/** Caller must run on the main server thread. Inventory/stock mutation and wallet call never run async. */
 final class TradeEngine {
-    interface InventoryPort { void apply(); void restore(); void persist(); }
+    interface InventoryPort {
+        void apply() throws Exception;
+        void restore() throws Exception;
+        void persist() throws Exception;
+    }
     interface Payment { boolean execute() throws Exception; }
     enum Result { SUCCESS, DECLINED }
 
-    /** Failure before the payment call where the original inventory was restored and persisted safely. */
+    /** Failure before the payment call where the original state was restored and persisted safely. */
     static final class SafeAbortException extends Exception {
         SafeAbortException(String message, Throwable cause) { super(message, cause); }
     }
@@ -25,7 +29,7 @@ final class TradeEngine {
         try {
             UUID tx = journal.begin(player, detail);
 
-            // No money has moved yet. If preparing/persisting inventory fails, restoration is safe.
+            // No money has moved yet. If preparing/persisting state fails, restoration is safe.
             try {
                 inventory.apply();
                 inventory.persist();
@@ -39,7 +43,7 @@ final class TradeEngine {
                     // Recovery itself is uncertain. Leave BEGIN pending and fail closed.
                     throw preparationFailure;
                 }
-                throw new SafeAbortException("Transaksi dibatalkan sebelum pembayaran; inventory dipulihkan.", preparationFailure);
+                throw new SafeAbortException("Transaksi dibatalkan sebelum pembayaran; state dipulihkan.", preparationFailure);
             }
 
             // From this point a thrown provider exception is ambiguous: never auto-restore/replay.
